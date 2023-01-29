@@ -1,0 +1,1 @@
+import{W as c}from"./index-f90046fb.js";function i(t,{delay:e=0,duration:o=400,easing:s=c}={}){const n=+getComputedStyle(t).opacity;return{delay:e,duration:o,easing:s,css:a=>`opacity: ${a*n}`}}export{i as f};
