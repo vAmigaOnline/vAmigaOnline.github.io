@@ -1,5 +1,4 @@
-
-
+// include: shell.js
 // The Module object: Our interface to the outside world. We import
 // and export values on it. There are various ways Module can be used:
 // 1. Not defined. We create it here
@@ -15,13 +14,9 @@
 // can continue to use Module afterwards as well.
 var Module = typeof Module != 'undefined' ? Module : {};
 
-// See https://caniuse.com/mdn-javascript_builtins_object_assign
-
-// See https://caniuse.com/mdn-javascript_builtins_bigint64array
-
 // --pre-jses are emitted after the Module integration code, so that they can
 // refer to Module (if they choose; they can also define Module)
-// {{PRE_JSES}}
+
 
 // Sometimes an existing Module object exists with properties
 // meant to overwrite the default module functionality. Here
@@ -105,9 +100,7 @@ if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
   // be done differently.
   {
 // include: web_or_worker_shell_read.js
-
-
-  read_ = (url) => {
+read_ = (url) => {
       var xhr = new XMLHttpRequest();
       xhr.open('GET', url, false);
       xhr.send(null);
@@ -169,42 +162,9 @@ if (Module['quit']) quit_ = Module['quit'];
 
 // perform assertions in shell.js after we set up out() and err(), as otherwise if an assertion fails it cannot print the message
 
-// include: support.js
 
-
-var STACK_ALIGN = 16;
-var POINTER_SIZE = 4;
-
-function getNativeTypeSize(type) {
-  switch (type) {
-    case 'i1': case 'i8': case 'u8': return 1;
-    case 'i16': case 'u16': return 2;
-    case 'i32': case 'u32': return 4;
-    case 'i64': case 'u64': return 8;
-    case 'float': return 4;
-    case 'double': return 8;
-    default: {
-      if (type[type.length - 1] === '*') {
-        return POINTER_SIZE;
-      }
-      if (type[0] === 'i') {
-        const bits = Number(type.substr(1));
-        assert(bits % 8 === 0, 'getNativeTypeSize invalid bits ' + bits + ', type ' + type);
-        return bits / 8;
-      }
-      return 0;
-    }
-  }
-}
-
-// include: runtime_debug.js
-
-
-// end include: runtime_debug.js
-// end include: support.js
-
-
-
+// end include: shell.js
+// include: preamble.js
 // === Preamble library stuff ===
 
 // Documentation for the public APIs defined in this file must be updated in:
@@ -254,8 +214,6 @@ function assert(condition, text) {
 }
 
 // include: runtime_strings.js
-
-
 // runtime_strings.js: String related runtime functions that are part of both
 // MINIMAL_RUNTIME and regular runtime.
 
@@ -481,15 +439,15 @@ function updateMemoryViews() {
   Module['HEAPU64'] = HEAPU64 = new BigUint64Array(b);
 }
 
-var STACK_SIZE = 33554432;
+// In non-standalone/normal mode, we create the memory here.
+// include: runtime_init_memory.js
+// Create the wasm memory. (Note: this only applies if IMPORTED_MEMORY is defined)
 
 var INITIAL_MEMORY = Module['INITIAL_MEMORY'] || 536870912;
 
-// In non-standalone/normal mode, we create the memory here.
-// include: runtime_init_memory.js
+assert(INITIAL_MEMORY >= 33554432, 'INITIAL_MEMORY should be larger than STACK_SIZE, was ' + INITIAL_MEMORY + '! (STACK_SIZE=' + 33554432 + ')');
 
-
-// Create the wasm memory. (Note: this only applies if IMPORTED_MEMORY is defined)
+// check for full engine support (use string 'subarray' to avoid closure compiler confusion)
 
 if (ENVIRONMENT_IS_PTHREAD) {
   wasmMemory = Module['wasmMemory'];
@@ -532,12 +490,8 @@ var wasmTable;
 
 // end include: runtime_init_table.js
 // include: runtime_stack_check.js
-
-
 // end include: runtime_stack_check.js
 // include: runtime_assertions.js
-
-
 // end include: runtime_assertions.js
 var __ATPRERUN__  = []; // functions called before the runtime is initialized
 var __ATINIT__    = []; // functions called during startup
@@ -552,14 +506,12 @@ function keepRuntimeAlive() {
 }
 
 function preRun() {
-
   if (Module['preRun']) {
     if (typeof Module['preRun'] == 'function') Module['preRun'] = [Module['preRun']];
     while (Module['preRun'].length) {
       addOnPreRun(Module['preRun'].shift());
     }
   }
-
   callRuntimeCallbacks(__ATPRERUN__);
 }
 
@@ -619,8 +571,6 @@ function addOnPostRun(cb) {
 }
 
 // include: runtime_math.js
-
-
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/imul
 
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/fround
@@ -704,18 +654,30 @@ function abort(what) {
   // though it can.
   // TODO(https://github.com/google/closure-compiler/pull/3913): Remove if/when upstream closure gets fixed.
   // See above, in the meantime, we resort to wasm code for trapping.
-  ___trap();
+  //
+  // In case abort() is called before the module is initialized, Module['asm']
+  // and its exported '__trap' function is not available, in which case we throw
+  // a RuntimeError.
+  //
+  // We trap instead of throwing RuntimeError to prevent infinite-looping in
+  // Wasm EH code (because RuntimeError is considered as a foreign exception and
+  // caught by 'catch_all'), but in case throwing RuntimeError is fine because
+  // the module has not even been instantiated, even less running.
+  if (runtimeInitialized) {
+    ___trap();
+  }
+  /** @suppress {checkTypes} */
+  var e = new WebAssembly.RuntimeError(what);
+
+  // Throw the error whether or not MODULARIZE is set because abort is used
+  // in code paths apart from instantiation where an exception is expected
+  // to be thrown when abort is called.
+  throw e;
 }
 
-// {{MEM_INITIALIZER}}
-
 // include: memoryprofiler.js
-
-
 // end include: memoryprofiler.js
 // include: URIUtils.js
-
-
 // Prefix of data URIs emitted by SINGLE_FILE and related options.
 var dataURIPrefix = 'data:application/octet-stream;base64,';
 
@@ -731,6 +693,8 @@ function isFileURI(filename) {
 }
 
 // end include: URIUtils.js
+// include: runtime_exceptions.js
+// end include: runtime_exceptions.js
 var wasmBinaryFile;
   wasmBinaryFile = 'vAmiga.wasm';
   if (!isDataURI(wasmBinaryFile)) {
@@ -752,7 +716,7 @@ function getBinary(file) {
   }
 }
 
-function getBinaryPromise() {
+function getBinaryPromise(binaryFile) {
   // If we don't have the binary yet, try to to load it asynchronously.
   // Fetch has some additional restrictions over XHR, like it can't be used on a file:// url.
   // See https://github.com/github/fetch/pull/92#issuecomment-140665932
@@ -761,19 +725,59 @@ function getBinaryPromise() {
   if (!wasmBinary && (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER)) {
     if (typeof fetch == 'function'
     ) {
-      return fetch(wasmBinaryFile, { credentials: 'same-origin' }).then(function(response) {
+      return fetch(binaryFile, { credentials: 'same-origin' }).then(function(response) {
         if (!response['ok']) {
-          throw "failed to load wasm binary file at '" + wasmBinaryFile + "'";
+          throw "failed to load wasm binary file at '" + binaryFile + "'";
         }
         return response['arrayBuffer']();
       }).catch(function () {
-          return getBinary(wasmBinaryFile);
+          return getBinary(binaryFile);
       });
     }
   }
 
   // Otherwise, getBinary should be able to get it synchronously
-  return Promise.resolve().then(function() { return getBinary(wasmBinaryFile); });
+  return Promise.resolve().then(function() { return getBinary(binaryFile); });
+}
+
+function instantiateArrayBuffer(binaryFile, imports, receiver) {
+  return getBinaryPromise(binaryFile).then(function(binary) {
+    return WebAssembly.instantiate(binary, imports);
+  }).then(function (instance) {
+    return instance;
+  }).then(receiver, function(reason) {
+    err('failed to asynchronously prepare wasm: ' + reason);
+
+    abort(reason);
+  });
+}
+
+function instantiateAsync(binary, binaryFile, imports, callback) {
+  if (!binary &&
+      typeof WebAssembly.instantiateStreaming == 'function' &&
+      !isDataURI(binaryFile) &&
+      typeof fetch == 'function') {
+    return fetch(binaryFile, { credentials: 'same-origin' }).then(function(response) {
+      // Suppress closure warning here since the upstream definition for
+      // instantiateStreaming only allows Promise<Repsponse> rather than
+      // an actual Response.
+      // TODO(https://github.com/google/closure-compiler/pull/3913): Remove if/when upstream closure is fixed.
+      /** @suppress {checkTypes} */
+      var result = WebAssembly.instantiateStreaming(response, imports);
+
+      return result.then(
+        callback,
+        function(reason) {
+          // We expect the most common failure cause to be a bad MIME type for the binary,
+          // in which case falling back to ArrayBuffer instantiation should work.
+          err('wasm streaming compile failed: ' + reason);
+          err('falling back to ArrayBuffer instantiation');
+          return instantiateArrayBuffer(binaryFile, imports, callback);
+        });
+    });
+  } else {
+    return instantiateArrayBuffer(binaryFile, imports, callback);
+  }
 }
 
 // Create the wasm instance.
@@ -781,8 +785,8 @@ function getBinaryPromise() {
 function createWasm() {
   // prepare imports
   var info = {
-    'env': asmLibraryArg,
-    'wasi_snapshot_preview1': asmLibraryArg,
+    'env': wasmImports,
+    'wasi_snapshot_preview1': wasmImports,
   };
   // Load the wasm module and create an instance of using native support in the JS engine.
   // handle a generated wasm instance, receiving its exports and
@@ -804,6 +808,7 @@ function createWasm() {
 
     PThread.loadWasmModuleToAllWorkers(() => removeRunDependency('wasm-instantiate'));
 
+    return exports;
   }
   // wait for the pthread pool (if any)
   addRunDependency('wasm-instantiate');
@@ -815,61 +820,20 @@ function createWasm() {
     receiveInstance(result['instance'], result['module']);
   }
 
-  function instantiateArrayBuffer(receiver) {
-    return getBinaryPromise().then(function(binary) {
-      return WebAssembly.instantiate(binary, info);
-    }).then(function (instance) {
-      return instance;
-    }).then(receiver, function(reason) {
-      err('failed to asynchronously prepare wasm: ' + reason);
-
-      abort(reason);
-    });
-  }
-
-  function instantiateAsync() {
-    if (!wasmBinary &&
-        typeof WebAssembly.instantiateStreaming == 'function' &&
-        !isDataURI(wasmBinaryFile) &&
-        typeof fetch == 'function') {
-      return fetch(wasmBinaryFile, { credentials: 'same-origin' }).then(function(response) {
-        // Suppress closure warning here since the upstream definition for
-        // instantiateStreaming only allows Promise<Repsponse> rather than
-        // an actual Response.
-        // TODO(https://github.com/google/closure-compiler/pull/3913): Remove if/when upstream closure is fixed.
-        /** @suppress {checkTypes} */
-        var result = WebAssembly.instantiateStreaming(response, info);
-
-        return result.then(
-          receiveInstantiationResult,
-          function(reason) {
-            // We expect the most common failure cause to be a bad MIME type for the binary,
-            // in which case falling back to ArrayBuffer instantiation should work.
-            err('wasm streaming compile failed: ' + reason);
-            err('falling back to ArrayBuffer instantiation');
-            return instantiateArrayBuffer(receiveInstantiationResult);
-          });
-      });
-    } else {
-      return instantiateArrayBuffer(receiveInstantiationResult);
-    }
-  }
-
   // User shell pages can write their own Module.instantiateWasm = function(imports, successCallback) callback
   // to manually instantiate the Wasm module themselves. This allows pages to run the instantiation parallel
   // to any other async startup actions they are performing.
   // Also pthreads and wasm workers initialize the wasm instance through this path.
   if (Module['instantiateWasm']) {
     try {
-      var exports = Module['instantiateWasm'](info, receiveInstance);
-      return exports;
+      return Module['instantiateWasm'](info, receiveInstance);
     } catch(e) {
       err('Module.instantiateWasm callback failed with error: ' + e);
         return false;
     }
   }
 
-  instantiateAsync();
+  instantiateAsync(wasmBinary, wasmBinaryFile, info, receiveInstantiationResult);
   return {}; // no exports yet; we'll fill them in later
 }
 
@@ -877,15 +841,17 @@ function createWasm() {
 var tempDouble;
 var tempI64;
 
+// include: runtime_debug.js
+// end include: runtime_debug.js
 // === Body ===
 
 var ASM_CONSTS = {
-  227580: ($0, $1, $2, $3, $4) => { self.Module.processMsg($0, $1, $2, $3, $4); }
+  228156: ($0, $1, $2, $3, $4) => { self.Module.processMsg($0, $1, $2, $3, $4); }
 };
 
 
 
-
+// end include: preamble.js
 
   /** @constructor */
   function ExitStatus(status) {
@@ -896,10 +862,21 @@ var ASM_CONSTS = {
 
   
   
+  function terminateWorker(worker) {
+      worker.terminate();
+      // terminate() can be asynchronous, so in theory the worker can continue
+      // to run for some amount of time after termination.  However from our POV
+      // the worker now dead and we don't want to hear from it again, so we stub
+      // out its message handler here.  This avoids having to check in each of
+      // the onmessage handlers if the message was coming from valid worker.
+      worker.onmessage = (e) => {
+      };
+    }
+  
   function killThread(pthread_ptr) {
       var worker = PThread.pthreads[pthread_ptr];
       delete PThread.pthreads[pthread_ptr];
-      worker.terminate();
+      terminateWorker(worker);
       __emscripten_thread_free_data(pthread_ptr);
       // The worker was completely nuked (not just the pthread execution it was hosting), so remove it from running workers
       // but don't put it back to the pool.
@@ -1094,7 +1071,7 @@ var ASM_CONSTS = {
         //   // device, it always assumes it's a TTY device. because of this, we're forcing
         //   // process.stdin to UTF8 encoding to at least make stdin reading compatible
         //   // with text files until FS.init can be refactored.
-        //   process['stdin']['setEncoding']('utf8');
+        //   process.stdin.setEncoding('utf8');
         // }
       },shutdown:function() {
         // https://github.com/emscripten-core/emscripten/pull/1555
@@ -1104,7 +1081,7 @@ var ASM_CONSTS = {
         //   // inolen: I thought read() in that case was a synchronous operation that just grabbed some amount of buffered data if it exists?
         //   // isaacs: it is. but it also triggers a _read() call, which calls readStart() on the handle
         //   // isaacs: do process.stdin.pause() and i'd think it'd probably close the pending call
-        //   process['stdin']['pause']();
+        //   process.stdin.pause();
         // }
       },register:function(dev, ops) {
         TTY.ttys[dev] = { input: [], output: [], ops: ops };
@@ -2589,6 +2566,13 @@ var ASM_CONSTS = {
       },ensureErrnoError:() => {
         if (FS.ErrnoError) return;
         FS.ErrnoError = /** @this{Object} */ function ErrnoError(errno, node) {
+          // We set the `name` property to be able to identify `FS.ErrnoError`
+          // - the `name` is a standard ECMA-262 property of error objects. Kind of good to have it anyway.
+          // - when using PROXYFS, an error can come from an underlying FS
+          // as different FS objects have their own FS.ErrnoError each,
+          // the test `err instanceof FS.ErrnoError` won't detect an error coming from another filesystem, causing bugs.
+          // we'll use the reliable test `err.name == "ErrnoError"` instead
+          this.name = 'ErrnoError';
           this.node = node;
           this.setErrno = /** @this{Object} */ function(errno) {
             this.errno = errno;
@@ -2987,9 +2971,7 @@ var ASM_CONSTS = {
         return window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
       },DB_NAME:() => {
         return 'EM_FS_' + window.location.pathname;
-      },DB_VERSION:20,DB_STORE_NAME:"FILE_DATA",saveFilesToDB:(paths, onload, onerror) => {
-        onload = onload || (() => {});
-        onerror = onerror || (() => {});
+      },DB_VERSION:20,DB_STORE_NAME:"FILE_DATA",saveFilesToDB:(paths, onload = (() => {}), onerror = (() => {})) => {
         var indexedDB = FS.indexedDB();
         try {
           var openRequest = indexedDB.open(FS.DB_NAME(), FS.DB_VERSION);
@@ -3017,9 +2999,7 @@ var ASM_CONSTS = {
           transaction.onerror = onerror;
         };
         openRequest.onerror = onerror;
-      },loadFilesFromDB:(paths, onload, onerror) => {
-        onload = onload || (() => {});
-        onerror = onerror || (() => {});
+      },loadFilesFromDB:(paths, onload = (() => {}), onerror = (() => {})) => {
         var indexedDB = FS.indexedDB();
         try {
           var openRequest = indexedDB.open(FS.DB_NAME(), FS.DB_VERSION);
@@ -3130,9 +3110,9 @@ var ASM_CONSTS = {
       }};
   
   function _proc_exit(code) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(1, 1, code);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(1, 1, code);
+  
       EXITSTATUS = code;
       if (!keepRuntimeAlive()) {
         PThread.terminateAllThreads();
@@ -3147,16 +3127,14 @@ var ASM_CONSTS = {
   function exitJS(status, implicit) {
       EXITSTATUS = status;
   
-      if (!implicit) {
-        if (ENVIRONMENT_IS_PTHREAD) {
-          // When running in a pthread we propagate the exit back to the main thread
-          // where it can decide if the whole process should be shut down or not.
-          // The pthread may have decided not to exit its own runtime, for example
-          // because it runs a main loop, but that doesn't affect the main thread.
-          exitOnMainThread(status);
-          throw 'unwind';
-        } else {
-        }
+      if (ENVIRONMENT_IS_PTHREAD) {
+        // implict exit can never happen on a pthread
+        // When running in a pthread we propagate the exit back to the main thread
+        // where it can decide if the whole process should be shut down or not.
+        // The pthread may have decided not to exit its own runtime, for example
+        // because it runs a main loop, but that doesn't affect the main thread.
+        exitOnMainThread(status);
+        throw 'unwind';
       }
   
       _proc_exit(status);
@@ -3176,7 +3154,8 @@ var ASM_CONSTS = {
     }
   
   var PThread = {unusedWorkers:[],runningWorkers:[],tlsInitFunctions:[],pthreads:{},init:function() {
-        if (ENVIRONMENT_IS_PTHREAD) {
+        if (ENVIRONMENT_IS_PTHREAD
+          ) {
           PThread.initWorker();
         } else {
           PThread.initMainThread();
@@ -3199,15 +3178,22 @@ var ASM_CONSTS = {
         noExitRuntime = false;
       },setExitStatus:function(status) {
         EXITSTATUS = status;
-      },terminateAllThreads:function() {
-        for (var worker of Object.values(PThread.pthreads)) {
-          PThread.returnWorkerToPool(worker);
+      },terminateAllThreads__deps:["$terminateWorker"],terminateAllThreads:function() {
+        // Attempt to kill all workers.  Sadly (at least on the web) there is no
+        // way to terminate a worker synchronously, or to be notified when a
+        // worker in actually terminated.  This means there is some risk that
+        // pthreads will continue to be executing after `worker.terminate` has
+        // returned.  For this reason, we don't call `returnWorkerToPool` here or
+        // free the underlying pthread data structures.
+        for (var worker of PThread.runningWorkers) {
+          terminateWorker(worker);
         }
-  
         for (var worker of PThread.unusedWorkers) {
-          worker.terminate();
+          terminateWorker(worker);
         }
         PThread.unusedWorkers = [];
+        PThread.runningWorkers = [];
+        PThread.pthreads = [];
       },returnWorkerToPool:function(worker) {
         // We don't want to run main thread queued calls here, since we are doing
         // some operations that leave the worker queue in an invalid state until
@@ -3399,9 +3385,9 @@ var ASM_CONSTS = {
   
   
   function exitOnMainThread(returnCode) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(2, 0, returnCode);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(2, 0, returnCode);
+  
       try {
         _exit(returnCode);
       } catch (e) {
@@ -3449,20 +3435,19 @@ var ASM_CONSTS = {
      * @param {string} type
      */
   function getValue(ptr, type = 'i8') {
-      if (type.endsWith('*')) type = '*';
-      switch (type) {
-        case 'i1': return HEAP8[((ptr)>>0)];
-        case 'i8': return HEAP8[((ptr)>>0)];
-        case 'i16': return HEAP16[((ptr)>>1)];
-        case 'i32': return HEAP32[((ptr)>>2)];
-        case 'i64': return HEAP64[((ptr)>>3)];
-        case 'float': return HEAPF32[((ptr)>>2)];
-        case 'double': return HEAPF64[((ptr)>>3)];
-        case '*': return HEAPU32[((ptr)>>2)];
-        default: abort('invalid type for getValue: ' + type);
-      }
-      return null;
+    if (type.endsWith('*')) type = '*';
+    switch (type) {
+      case 'i1': return HEAP8[((ptr)>>0)];
+      case 'i8': return HEAP8[((ptr)>>0)];
+      case 'i16': return HEAP16[((ptr)>>1)];
+      case 'i32': return HEAP32[((ptr)>>2)];
+      case 'i64': return HEAP64[((ptr)>>3)];
+      case 'float': return HEAPF32[((ptr)>>2)];
+      case 'double': return HEAPF64[((ptr)>>3)];
+      case '*': return HEAPU32[((ptr)>>2)];
+      default: abort('invalid type for getValue: ' + type);
     }
+  }
 
   
   function incrementExceptionRefcount(ex) {
@@ -3512,19 +3497,19 @@ var ASM_CONSTS = {
      * @param {string} type
      */
   function setValue(ptr, value, type = 'i8') {
-      if (type.endsWith('*')) type = '*';
-      switch (type) {
-        case 'i1': HEAP8[((ptr)>>0)] = value; break;
-        case 'i8': HEAP8[((ptr)>>0)] = value; break;
-        case 'i16': HEAP16[((ptr)>>1)] = value; break;
-        case 'i32': HEAP32[((ptr)>>2)] = value; break;
-        case 'i64': (tempI64 = [value>>>0,(tempDouble=value,(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[((ptr)>>2)] = tempI64[0],HEAP32[(((ptr)+(4))>>2)] = tempI64[1]); break;
-        case 'float': HEAPF32[((ptr)>>2)] = value; break;
-        case 'double': HEAPF64[((ptr)>>3)] = value; break;
-        case '*': HEAPU32[((ptr)>>2)] = value; break;
-        default: abort('invalid type for setValue: ' + type);
-      }
+    if (type.endsWith('*')) type = '*';
+    switch (type) {
+      case 'i1': HEAP8[((ptr)>>0)] = value; break;
+      case 'i8': HEAP8[((ptr)>>0)] = value; break;
+      case 'i16': HEAP16[((ptr)>>1)] = value; break;
+      case 'i32': HEAP32[((ptr)>>2)] = value; break;
+      case 'i64': (tempI64 = [value>>>0,(tempDouble=value,(+(Math.abs(tempDouble))) >= 1.0 ? (tempDouble > 0.0 ? ((Math.min((+(Math.floor((tempDouble)/4294967296.0))), 4294967295.0))|0)>>>0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble)))>>>0))/4294967296.0)))))>>>0) : 0)],HEAP32[((ptr)>>2)] = tempI64[0],HEAP32[(((ptr)+(4))>>2)] = tempI64[1]); break;
+      case 'float': HEAPF32[((ptr)>>2)] = value; break;
+      case 'double': HEAPF64[((ptr)>>3)] = value; break;
+      case '*': HEAPU32[((ptr)>>2)] = value; break;
+      default: abort('invalid type for setValue: ' + type);
     }
+  }
 
   function ___assert_fail(condition, filename, line, func) {
       abort('Assertion failed: ' + UTF8ToString(condition) + ', at: ' + [filename ? UTF8ToString(filename) : 'unknown filename', line, func ? UTF8ToString(func) : 'unknown function']);
@@ -3558,9 +3543,9 @@ var ASM_CONSTS = {
   
   
   function pthreadCreateProxied(pthread_ptr, attr, startRoutine, arg) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(3, 1, pthread_ptr, attr, startRoutine, arg);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(3, 1, pthread_ptr, attr, startRoutine, arg);
+  
       return ___pthread_create_js(pthread_ptr, attr, startRoutine, arg);
     
   }
@@ -3613,7 +3598,7 @@ var ASM_CONSTS = {
   var SOCKFS = {mount:function(mount) {
         // If Module['websocket'] has already been defined (e.g. for configuring
         // the subprotocol/url) use that, if not initialise it to a new object.
-        Module['websocket'] = (Module['websocket'] && 
+        Module['websocket'] = (Module['websocket'] &&
                                ('object' === typeof Module['websocket'])) ? Module['websocket'] : {};
   
         // Add the Event registration mechanism to the exported websocket configuration
@@ -3888,7 +3873,7 @@ var ASM_CONSTS = {
             });
             peer.socket.on('error', function(error) {
               // Although the ws library may pass errors that may be more descriptive than
-              // ECONNREFUSED they are not necessarily the expected error code e.g. 
+              // ECONNREFUSED they are not necessarily the expected error code e.g.
               // ENOTFOUND on getaddrinfo seems to be node.js specific, so using ECONNREFUSED
               // is still probably the most useful thing to do.
               sock.error = 14; // Used in getsockopt for SOL_SOCKET/SO_ERROR test.
@@ -3992,7 +3977,7 @@ var ASM_CONSTS = {
             try {
               sock.sock_ops.listen(sock, 0);
             } catch (e) {
-              if (!(e instanceof FS.ErrnoError)) throw e;
+              if (!(e.name === 'ErrnoError')) throw e;
               if (e.errno !== 138) throw e;
             }
           }
@@ -4320,9 +4305,9 @@ var ASM_CONSTS = {
   
   
   function ___syscall_accept4(fd, addr, addrlen, flags) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(4, 1, fd, addr, addrlen, flags);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(4, 1, fd, addr, addrlen, flags);
+  
   try {
   
       var sock = getSocketFromFD(fd);
@@ -4332,7 +4317,7 @@ var ASM_CONSTS = {
       }
       return newsock.stream.fd;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4488,9 +4473,9 @@ var ASM_CONSTS = {
   
   
   function ___syscall_bind(fd, addr, addrlen) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(5, 1, fd, addr, addrlen);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(5, 1, fd, addr, addrlen);
+  
   try {
   
       var sock = getSocketFromFD(fd);
@@ -4498,7 +4483,7 @@ var ASM_CONSTS = {
       sock.sock_ops.bind(sock, info.addr, info.port);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4509,9 +4494,9 @@ var ASM_CONSTS = {
   
   
   function ___syscall_connect(fd, addr, addrlen) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(6, 1, fd, addr, addrlen);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(6, 1, fd, addr, addrlen);
+  
   try {
   
       var sock = getSocketFromFD(fd);
@@ -4519,7 +4504,7 @@ var ASM_CONSTS = {
       sock.sock_ops.connect(sock, info.addr, info.port);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4529,9 +4514,9 @@ var ASM_CONSTS = {
   
   
   function ___syscall_fcntl64(fd, cmd, varargs) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(7, 1, fd, cmd, varargs);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(7, 1, fd, cmd, varargs);
+  
   SYSCALLS.varargs = varargs;
   try {
   
@@ -4584,7 +4569,7 @@ var ASM_CONSTS = {
         }
       }
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4593,15 +4578,15 @@ var ASM_CONSTS = {
 
   
   function ___syscall_fstat64(fd, buf) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(8, 1, fd, buf);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(8, 1, fd, buf);
+  
   try {
   
       var stream = SYSCALLS.getStreamFromFD(fd);
       return SYSCALLS.doStat(FS.stat, stream.path, buf);
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4610,9 +4595,9 @@ var ASM_CONSTS = {
 
   
   function ___syscall_getdents64(fd, dirp, count) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(9, 1, fd, dirp, count);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(9, 1, fd, dirp, count);
+  
   try {
   
       var stream = SYSCALLS.getStreamFromFD(fd)
@@ -4658,7 +4643,7 @@ var ASM_CONSTS = {
       FS.llseek(stream, idx * struct_size, 0);
       return pos;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4667,9 +4652,9 @@ var ASM_CONSTS = {
 
   
   function ___syscall_ioctl(fd, op, varargs) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(10, 1, fd, op, varargs);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(10, 1, fd, op, varargs);
+  
   SYSCALLS.varargs = varargs;
   try {
   
@@ -4719,7 +4704,7 @@ var ASM_CONSTS = {
         default: return -28; // not supported
       }
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4729,16 +4714,16 @@ var ASM_CONSTS = {
   
   
   function ___syscall_listen(fd, backlog) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(11, 1, fd, backlog);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(11, 1, fd, backlog);
+  
   try {
   
       var sock = getSocketFromFD(fd);
       sock.sock_ops.listen(sock, backlog);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4747,15 +4732,15 @@ var ASM_CONSTS = {
 
   
   function ___syscall_lstat64(path, buf) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(12, 1, path, buf);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(12, 1, path, buf);
+  
   try {
   
       path = SYSCALLS.getStr(path);
       return SYSCALLS.doStat(FS.lstat, path, buf);
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4764,9 +4749,9 @@ var ASM_CONSTS = {
 
   
   function ___syscall_newfstatat(dirfd, path, buf, flags) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(13, 1, dirfd, path, buf, flags);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(13, 1, dirfd, path, buf, flags);
+  
   try {
   
       path = SYSCALLS.getStr(path);
@@ -4776,7 +4761,7 @@ var ASM_CONSTS = {
       path = SYSCALLS.calculateAt(dirfd, path, allowEmpty);
       return SYSCALLS.doStat(nofollow ? FS.lstat : FS.stat, path, buf);
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4785,9 +4770,9 @@ var ASM_CONSTS = {
 
   
   function ___syscall_openat(dirfd, path, flags, varargs) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(14, 1, dirfd, path, flags, varargs);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(14, 1, dirfd, path, flags, varargs);
+  
   SYSCALLS.varargs = varargs;
   try {
   
@@ -4796,7 +4781,7 @@ var ASM_CONSTS = {
       var mode = varargs ? SYSCALLS.get() : 0;
       return FS.open(path, flags, mode).fd;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4808,9 +4793,9 @@ var ASM_CONSTS = {
   
   
   function ___syscall_recvfrom(fd, buf, len, flags, addr, addrlen) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(15, 1, fd, buf, len, flags, addr, addrlen);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(15, 1, fd, buf, len, flags, addr, addrlen);
+  
   try {
   
       var sock = getSocketFromFD(fd);
@@ -4822,7 +4807,7 @@ var ASM_CONSTS = {
       HEAPU8.set(msg.buffer, buf);
       return msg.buffer.byteLength;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4831,16 +4816,16 @@ var ASM_CONSTS = {
 
   
   function ___syscall_rmdir(path) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(16, 1, path);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(16, 1, path);
+  
   try {
   
       path = SYSCALLS.getStr(path);
       FS.rmdir(path);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4851,9 +4836,9 @@ var ASM_CONSTS = {
   
   
   function ___syscall_sendto(fd, message, length, flags, addr, addr_len) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(17, 1, fd, message, length, flags, addr, addr_len);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(17, 1, fd, message, length, flags, addr, addr_len);
+  
   try {
   
       var sock = getSocketFromFD(fd);
@@ -4865,7 +4850,7 @@ var ASM_CONSTS = {
       // sendto an address
       return sock.sock_ops.sendmsg(sock, HEAP8,message, length, dest.addr, dest.port);
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4875,15 +4860,15 @@ var ASM_CONSTS = {
   
   
   function ___syscall_socket(domain, type, protocol) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(18, 1, domain, type, protocol);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(18, 1, domain, type, protocol);
+  
   try {
   
       var sock = SOCKFS.createSocket(domain, type, protocol);
       return sock.stream.fd;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4892,15 +4877,15 @@ var ASM_CONSTS = {
 
   
   function ___syscall_stat64(path, buf) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(19, 1, path, buf);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(19, 1, path, buf);
+  
   try {
   
       path = SYSCALLS.getStr(path);
       return SYSCALLS.doStat(FS.stat, path, buf);
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4909,9 +4894,9 @@ var ASM_CONSTS = {
 
   
   function ___syscall_unlinkat(dirfd, path, flags) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(20, 1, dirfd, path, flags);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(20, 1, dirfd, path, flags);
+  
   try {
   
       path = SYSCALLS.getStr(path);
@@ -4925,7 +4910,7 @@ var ASM_CONSTS = {
       }
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return -e.errno;
   }
   
@@ -4968,14 +4953,13 @@ var ASM_CONSTS = {
     }
   function createNamedFunction(name, body) {
       name = makeLegalFunctionName(name);
-      /*jshint evil:true*/
-      return new Function(
-          "body",
-          "return function " + name + "() {\n" +
-          "    \"use strict\";" +
-          "    return body.apply(this, arguments);\n" +
-          "};\n"
-      )(body);
+      // Use an abject with a computed property name to create a new function with
+      // a name specified at runtime, but without using `new Function` or `eval`.
+      return {
+        [name]: function() {
+          return body.apply(this, arguments);
+        }
+      }[name];
     }
   function extendError(baseErrorType, errorName) {
       var errorClass = createNamedFunction(errorName, function(message) {
@@ -6966,7 +6950,6 @@ var ASM_CONSTS = {
         }
         worker.postMessage({'cmd' : 'processProxyingQueue', 'queue': queue});
       }
-      return 1;
     }
 
   function __emscripten_set_offscreencanvas_size(target, width, height) {
@@ -7107,22 +7090,28 @@ var ASM_CONSTS = {
       let data = e.data, wasmCall = data['_wsc']; // '_wsc' is short for 'wasm call', trying to use an identifier name that will never conflict with user code
       wasmCall && getWasmTableEntry(wasmCall)(...data['x']);
     }
+  
+  function __wasm_worker_appendToQueue(e) {
+      __wasm_worker_delayedMessageQueue.push(e);
+    }
   function __wasm_worker_initializeRuntime() {
       let m = Module;
   
       // Run the C side Worker initialization for stack and TLS.
       _emscripten_wasm_worker_initialize(m['sb'], m['sz']);
+      // Record that this Wasm Worker supports synchronous blocking in emscripten_futex_wake().
+      ___set_thread_state(/*thread_ptr=*/0, /*is_main_thread=*/0, /*is_runtime_thread=*/0, /*supports_wait=*/0);
   
-      // The Wasm Worker runtime is now up, so we can start processing
-      // any postMessage function calls that have been received. Drop the temp
-      // message handler that queued any pending incoming postMessage function calls ...
-      removeEventListener('message', __wasm_worker_appendToQueue);
-      // ... then flush whatever messages we may have already gotten in the queue,
-      //     and clear __wasm_worker_delayedMessageQueue to undefined ...
-      __wasm_worker_delayedMessageQueue = __wasm_worker_delayedMessageQueue.forEach(__wasm_worker_runPostMessage);
-      // ... and finally register the proper postMessage handler that immediately
-      // dispatches incoming function calls without queueing them.
-      addEventListener('message', __wasm_worker_runPostMessage);
+        // The Wasm Worker runtime is now up, so we can start processing
+        // any postMessage function calls that have been received. Drop the temp
+        // message handler that queued any pending incoming postMessage function calls ...
+        removeEventListener('message', __wasm_worker_appendToQueue);
+        // ... then flush whatever messages we may have already gotten in the queue,
+        //     and clear __wasm_worker_delayedMessageQueue to undefined ...
+        __wasm_worker_delayedMessageQueue = __wasm_worker_delayedMessageQueue.forEach(__wasm_worker_runPostMessage);
+        // ... and finally register the proper postMessage handler that immediately
+        // dispatches incoming function calls without queueing them.
+        addEventListener('message', __wasm_worker_runPostMessage);
     }
 
   function _abort() {
@@ -7231,7 +7220,7 @@ var ASM_CONSTS = {
             HEAPF64[b + 2*i + 1] = arg;
           }
         }
-        return _emscripten_run_in_main_runtime_thread_js(index, serializedNumCallArgs, args, sync);
+        return __emscripten_run_in_main_runtime_thread_js(index, serializedNumCallArgs, args, sync);
       });
     }
   
@@ -7321,9 +7310,9 @@ var ASM_CONSTS = {
   
   
   function _environ_get(__environ, environ_buf) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(21, 1, __environ, environ_buf);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(21, 1, __environ, environ_buf);
+  
       var bufSize = 0;
       getEnvStrings().forEach(function(string, i) {
         var ptr = environ_buf + bufSize;
@@ -7339,9 +7328,9 @@ var ASM_CONSTS = {
   
   
   function _environ_sizes_get(penviron_count, penviron_buf_size) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(22, 1, penviron_count, penviron_buf_size);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(22, 1, penviron_count, penviron_buf_size);
+  
       var strings = getEnvStrings();
       HEAPU32[((penviron_count)>>2)] = strings.length;
       var bufSize = 0;
@@ -7357,16 +7346,16 @@ var ASM_CONSTS = {
 
   
   function _fd_close(fd) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(23, 1, fd);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(23, 1, fd);
+  
   try {
   
       var stream = SYSCALLS.getStreamFromFD(fd);
       FS.close(stream);
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   
@@ -7393,9 +7382,9 @@ var ASM_CONSTS = {
   
   
   function _fd_read(fd, iov, iovcnt, pnum) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(24, 1, fd, iov, iovcnt, pnum);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(24, 1, fd, iov, iovcnt, pnum);
+  
   try {
   
       var stream = SYSCALLS.getStreamFromFD(fd);
@@ -7403,7 +7392,7 @@ var ASM_CONSTS = {
       HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   
@@ -7422,9 +7411,9 @@ var ASM_CONSTS = {
   
   
   function _fd_seek(fd, /** @type {!BigInt} */ offset, whence, newOffset) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(25, 1, fd, /** @type {!BigInt} */ offset, whence, newOffset);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(25, 1, fd, /** @type {!BigInt} */ offset, whence, newOffset);
+  
   try {
   
       offset = bigintToI53Checked(offset); if (isNaN(offset)) return 61;
@@ -7434,7 +7423,7 @@ var ASM_CONSTS = {
       if (stream.getdents && offset === 0 && whence === 0) stream.getdents = null; // reset readdir state
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   
@@ -7460,9 +7449,9 @@ var ASM_CONSTS = {
   
   
   function _fd_write(fd, iov, iovcnt, pnum) {
-    if (ENVIRONMENT_IS_PTHREAD)
-      return _emscripten_proxy_to_main_thread_js(26, 1, fd, iov, iovcnt, pnum);
-    
+  if (ENVIRONMENT_IS_PTHREAD)
+    return _emscripten_proxy_to_main_thread_js(26, 1, fd, iov, iovcnt, pnum);
+  
   try {
   
       var stream = SYSCALLS.getStreamFromFD(fd);
@@ -7470,7 +7459,7 @@ var ASM_CONSTS = {
       HEAPU32[((pnum)>>2)] = num;
       return 0;
     } catch (e) {
-    if (typeof FS == 'undefined' || !(e instanceof FS.ErrnoError)) throw e;
+    if (typeof FS == 'undefined' || !(e.name === 'ErrnoError')) throw e;
     return e.errno;
   }
   
@@ -7882,9 +7871,7 @@ init_emval();;
 
 var proxiedFunctionTable = [null,_proc_exit,exitOnMainThread,pthreadCreateProxied,___syscall_accept4,___syscall_bind,___syscall_connect,___syscall_fcntl64,___syscall_fstat64,___syscall_getdents64,___syscall_ioctl,___syscall_listen,___syscall_lstat64,___syscall_newfstatat,___syscall_openat,___syscall_recvfrom,___syscall_rmdir,___syscall_sendto,___syscall_socket,___syscall_stat64,___syscall_unlinkat,_environ_get,_environ_sizes_get,_fd_close,_fd_read,_fd_seek,_fd_write];
 
-var ASSERTIONS = false;
-
-var asmLibraryArg = {
+var wasmImports = {
   "__assert_fail": ___assert_fail,
   "__emscripten_init_main_thread_js": ___emscripten_init_main_thread_js,
   "__emscripten_thread_cleanup": ___emscripten_thread_cleanup,
@@ -7951,8 +7938,8 @@ var asmLibraryArg = {
 };
 var asm = createWasm();
 /** @type {function(...*):?} */
-var ___wasm_call_ctors = Module["___wasm_call_ctors"] = function() {
-  return (___wasm_call_ctors = Module["___wasm_call_ctors"] = Module["asm"]["__wasm_call_ctors"]).apply(null, arguments);
+var ___wasm_call_ctors = function() {
+  return (___wasm_call_ctors = Module["asm"]["__wasm_call_ctors"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -7961,8 +7948,8 @@ var _main = Module["_main"] = function() {
 };
 
 /** @type {function(...*):?} */
-var _malloc = Module["_malloc"] = function() {
-  return (_malloc = Module["_malloc"] = Module["asm"]["malloc"]).apply(null, arguments);
+var _malloc = function() {
+  return (_malloc = Module["asm"]["malloc"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -7991,8 +7978,8 @@ var __embind_initialize_bindings = Module["__embind_initialize_bindings"] = func
 };
 
 /** @type {function(...*):?} */
-var ___errno_location = Module["___errno_location"] = function() {
-  return (___errno_location = Module["___errno_location"] = Module["asm"]["__errno_location"]).apply(null, arguments);
+var ___errno_location = function() {
+  return (___errno_location = Module["asm"]["__errno_location"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -8001,38 +7988,43 @@ var __emscripten_thread_init = Module["__emscripten_thread_init"] = function() {
 };
 
 /** @type {function(...*):?} */
+var ___set_thread_state = Module["___set_thread_state"] = function() {
+  return (___set_thread_state = Module["___set_thread_state"] = Module["asm"]["__set_thread_state"]).apply(null, arguments);
+};
+
+/** @type {function(...*):?} */
 var __emscripten_thread_crashed = Module["__emscripten_thread_crashed"] = function() {
   return (__emscripten_thread_crashed = Module["__emscripten_thread_crashed"] = Module["asm"]["_emscripten_thread_crashed"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _emscripten_main_thread_process_queued_calls = Module["_emscripten_main_thread_process_queued_calls"] = function() {
-  return (_emscripten_main_thread_process_queued_calls = Module["_emscripten_main_thread_process_queued_calls"] = Module["asm"]["emscripten_main_thread_process_queued_calls"]).apply(null, arguments);
+var _emscripten_main_thread_process_queued_calls = function() {
+  return (_emscripten_main_thread_process_queued_calls = Module["asm"]["emscripten_main_thread_process_queued_calls"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _htons = Module["_htons"] = function() {
-  return (_htons = Module["_htons"] = Module["asm"]["htons"]).apply(null, arguments);
+var _htons = function() {
+  return (_htons = Module["asm"]["htons"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _emscripten_main_browser_thread_id = Module["_emscripten_main_browser_thread_id"] = function() {
-  return (_emscripten_main_browser_thread_id = Module["_emscripten_main_browser_thread_id"] = Module["asm"]["emscripten_main_browser_thread_id"]).apply(null, arguments);
+var _emscripten_main_browser_thread_id = function() {
+  return (_emscripten_main_browser_thread_id = Module["asm"]["emscripten_main_browser_thread_id"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _emscripten_run_in_main_runtime_thread_js = Module["_emscripten_run_in_main_runtime_thread_js"] = function() {
-  return (_emscripten_run_in_main_runtime_thread_js = Module["_emscripten_run_in_main_runtime_thread_js"] = Module["asm"]["emscripten_run_in_main_runtime_thread_js"]).apply(null, arguments);
+var __emscripten_run_in_main_runtime_thread_js = function() {
+  return (__emscripten_run_in_main_runtime_thread_js = Module["asm"]["_emscripten_run_in_main_runtime_thread_js"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _emscripten_dispatch_to_thread_ = Module["_emscripten_dispatch_to_thread_"] = function() {
-  return (_emscripten_dispatch_to_thread_ = Module["_emscripten_dispatch_to_thread_"] = Module["asm"]["emscripten_dispatch_to_thread_"]).apply(null, arguments);
+var _emscripten_dispatch_to_thread_ = function() {
+  return (_emscripten_dispatch_to_thread_ = Module["asm"]["emscripten_dispatch_to_thread_"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _ntohs = Module["_ntohs"] = function() {
-  return (_ntohs = Module["_ntohs"] = Module["asm"]["ntohs"]).apply(null, arguments);
+var _ntohs = function() {
+  return (_ntohs = Module["asm"]["ntohs"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -8041,8 +8033,8 @@ var __emscripten_proxy_execute_task_queue = Module["__emscripten_proxy_execute_t
 };
 
 /** @type {function(...*):?} */
-var __emscripten_thread_free_data = Module["__emscripten_thread_free_data"] = function() {
-  return (__emscripten_thread_free_data = Module["__emscripten_thread_free_data"] = Module["asm"]["_emscripten_thread_free_data"]).apply(null, arguments);
+var __emscripten_thread_free_data = function() {
+  return (__emscripten_thread_free_data = Module["asm"]["_emscripten_thread_free_data"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -8051,13 +8043,13 @@ var __emscripten_thread_exit = Module["__emscripten_thread_exit"] = function() {
 };
 
 /** @type {function(...*):?} */
-var ___trap = Module["___trap"] = function() {
-  return (___trap = Module["___trap"] = Module["asm"]["__trap"]).apply(null, arguments);
+var ___trap = function() {
+  return (___trap = Module["asm"]["__trap"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var _emscripten_stack_set_limits = Module["_emscripten_stack_set_limits"] = function() {
-  return (_emscripten_stack_set_limits = Module["_emscripten_stack_set_limits"] = Module["asm"]["emscripten_stack_set_limits"]).apply(null, arguments);
+var _emscripten_stack_set_limits = function() {
+  return (_emscripten_stack_set_limits = Module["asm"]["emscripten_stack_set_limits"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -8066,18 +8058,18 @@ var _emscripten_wasm_worker_initialize = Module["_emscripten_wasm_worker_initial
 };
 
 /** @type {function(...*):?} */
-var stackSave = Module["stackSave"] = function() {
-  return (stackSave = Module["stackSave"] = Module["asm"]["stackSave"]).apply(null, arguments);
+var stackSave = function() {
+  return (stackSave = Module["asm"]["stackSave"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var stackRestore = Module["stackRestore"] = function() {
-  return (stackRestore = Module["stackRestore"] = Module["asm"]["stackRestore"]).apply(null, arguments);
+var stackRestore = function() {
+  return (stackRestore = Module["asm"]["stackRestore"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
-var stackAlloc = Module["stackAlloc"] = function() {
-  return (stackAlloc = Module["stackAlloc"] = Module["asm"]["stackAlloc"]).apply(null, arguments);
+var stackAlloc = function() {
+  return (stackAlloc = Module["asm"]["stackAlloc"]).apply(null, arguments);
 };
 
 /** @type {function(...*):?} */
@@ -8102,8 +8094,7 @@ var ___get_exception_message = Module["___get_exception_message"] = function() {
 
 
 
-
-
+// include: postamble.js
 // === Auto-generated postamble setup entry stuff ===
 
 Module["keepRuntimeAlive"] = keepRuntimeAlive;
@@ -8119,11 +8110,10 @@ dependenciesFulfilled = function runCaller() {
   if (!calledRun) dependenciesFulfilled = runCaller; // try this again later, after new deps are fulfilled
 };
 
-function callMain(args) {
+function callMain(args = []) {
 
-  var entryFunction = Module['_main'];
+  var entryFunction = _main;
 
-  args = args || [];
   args.unshift(thisProgram);
 
   var argc = args.length;
@@ -8138,8 +8128,6 @@ function callMain(args) {
 
     var ret = entryFunction(argc, argv);
 
-    // In PROXY_TO_PTHREAD builds, we should never exit the runtime below, as
-    // execution is asynchronously handed off to a pthread.
     // if we're not running an evented main loop, it's time to exit
     exitJS(ret, /* implicit = */ true);
     return ret;
@@ -8149,9 +8137,7 @@ function callMain(args) {
   }
 }
 
-/** @type {function(Array=)} */
-function run(args) {
-  args = args || arguments_;
+function run(args = arguments_) {
 
   if (runDependencies > 0) {
     return;
@@ -8223,4 +8209,4 @@ if (Module['noInitialRun']) shouldRunNow = false;
 run();
 
 
-
+// end include: postamble.js
