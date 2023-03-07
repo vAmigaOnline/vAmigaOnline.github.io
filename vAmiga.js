@@ -845,11 +845,6 @@ var tempI64;
 // end include: runtime_debug.js
 // === Body ===
 
-var ASM_CONSTS = {
-  228156: ($0, $1, $2, $3, $4) => { self.Module.processMsg($0, $1, $2, $3, $4); }
-};
-
-
 
 // end include: preamble.js
 
@@ -7118,47 +7113,6 @@ var ASM_CONSTS = {
       abort('');
     }
 
-  var readEmAsmArgsArray = [];
-  function readEmAsmArgs(sigPtr, buf) {
-      readEmAsmArgsArray.length = 0;
-      var ch;
-      // Most arguments are i32s, so shift the buffer pointer so it is a plain
-      // index into HEAP32.
-      buf >>= 2;
-      while (ch = HEAPU8[sigPtr++]) {
-        // Floats are always passed as doubles, and doubles and int64s take up 8
-        // bytes (two 32-bit slots) in memory, align reads to these:
-        buf += (ch != 105/*i*/) & buf;
-        readEmAsmArgsArray.push(
-          ch == 105/*i*/ ? HEAP32[buf] :
-         (ch == 106/*j*/ ? HEAP64 : HEAPF64)[buf++ >> 1]
-        );
-        ++buf;
-      }
-      return readEmAsmArgsArray;
-    }
-  function runMainThreadEmAsm(code, sigPtr, argbuf, sync) {
-      var args = readEmAsmArgs(sigPtr, argbuf);
-      if (ENVIRONMENT_IS_PTHREAD) {
-        // EM_ASM functions are variadic, receiving the actual arguments as a buffer
-        // in memory. the last parameter (argBuf) points to that data. We need to
-        // always un-variadify that, *before proxying*, as in the async case this
-        // is a stack allocation that LLVM made, which may go away before the main
-        // thread gets the message. For that reason we handle proxying *after* the
-        // call to readEmAsmArgs, and therefore we do that manually here instead
-        // of using __proxy. (And dor simplicity, do the same in the sync
-        // case as well, even though it's not strictly necessary, to keep the two
-        // code paths as similar as possible on both sides.)
-        // -1 - code is the encoding of a proxied EM_ASM, as a negative number
-        // (positive numbers are non-EM_ASM calls).
-        return _emscripten_proxy_to_main_thread_js.apply(null, [-1 - code, sync].concat(args));
-      }
-      return ASM_CONSTS[code].apply(null, args);
-    }
-  function _emscripten_asm_const_async_on_main_thread(code, sigPtr, argbuf) {
-      return runMainThreadEmAsm(code, sigPtr, argbuf, 0);
-    }
-
   function warnOnce(text) {
       if (!warnOnce.shown) warnOnce.shown = {};
       if (!warnOnce.shown[text]) {
@@ -7241,8 +7195,7 @@ var ASM_CONSTS = {
       }
       // Proxied JS library funcs are encoded as positive values, and
       // EM_ASMs as negative values (see include_asm_consts)
-      var isEmAsmConst = index < 0;
-      var func = !isEmAsmConst ? proxiedFunctionTable[index] : ASM_CONSTS[-index - 1];
+      var func = proxiedFunctionTable[index];
       return func.apply(null, _emscripten_receive_on_main_thread_js_callArgs);
     }
 
@@ -7918,7 +7871,6 @@ var wasmImports = {
   "_mktime_js": __mktime_js,
   "_tzset_js": __tzset_js,
   "abort": _abort,
-  "emscripten_asm_const_async_on_main_thread": _emscripten_asm_const_async_on_main_thread,
   "emscripten_check_blocking_allowed": _emscripten_check_blocking_allowed,
   "emscripten_date_now": _emscripten_date_now,
   "emscripten_get_now": _emscripten_get_now,
